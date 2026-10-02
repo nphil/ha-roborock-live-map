@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-label="Roborock Live Map">
+  <title>Roborock Live Map</title>
+  <!-- Same geometry as tools/render_brand.py (light variant). -->
+  <rect width="256" height="256" rx="56" fill="#5B45E0"/>
+  <!-- a small isometric room (the 3D map): back-left wall, back-right wall, floor.
+       A same-colour stroke with round joins rounds the corners. -->
+  <g stroke-width="5" stroke-linejoin="round">
+    <polygon points="24,158 128,106 128,46 24,98" fill="#8B7CF2" stroke="#8B7CF2"/>
+    <polygon points="128,106 232,158 232,98 128,46" fill="#D9D2FF" stroke="#D9D2FF"/>
+    <polygon points="128,106 232,158 128,210 24,158" fill="#FFFFFF" stroke="#FFFFFF"/>
+  </g>
+  <!-- live ping on the floor around the robot -->
+  <ellipse cx="152" cy="161" rx="44" ry="22" fill="none" stroke="#FFB82E" stroke-width="4"/>
+  <!-- the route the robot just drove: start dot, one bend, up to the robot -->
+  <polyline points="64,163 102,144 134,160" fill="none" stroke="#FFB82E" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="163" r="9" fill="#FFB82E"/>
+  <!-- the robot: a flat disc seen from above -->
+  <ellipse cx="152" cy="162" rx="33" ry="16.5" fill="#E08A00"/>
+  <rect x="119" y="150" width="66" height="12" fill="#E08A00"/>
+  <ellipse cx="152" cy="150" rx="33" ry="16.5" fill="#FFB82E"/>
+  <!-- its front bumper seam -->
+  <path d="M179.89 151.22 A28 14 0 0 1 140.17 162.69" fill="none" stroke="#E08A00" stroke-width="3.2" stroke-linecap="round"/>
+  <!-- and its lidar turret -->
+  <ellipse cx="150" cy="150" rx="11" ry="5.5" fill="#E08A00"/>
+  <rect x="139" y="146" width="22" height="4" fill="#E08A00"/>
+  <ellipse cx="150" cy="146" rx="11" ry="5.5" fill="#FFFFFF"/>
+</svg>

@@ -1,14 +1,15 @@
 {
   "domain": "roborock_live_map",
   "name": "Roborock Live Map",
-  "codeowners": [],
+  "codeowners": ["@nphil"],
   "config_flow": true,
   "dependencies": [
     "roborock",
     "http"
   ],
-  "documentation": "https://github.com/Python-roborock/RoborockCustomMap",
+  "documentation": "https://github.com/nphil/ha-roborock-live-map",
   "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/nphil/ha-roborock-live-map/issues",
   "requirements": [],
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
