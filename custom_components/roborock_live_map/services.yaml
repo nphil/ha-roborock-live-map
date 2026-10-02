@@ -1,0 +1,105 @@
+refresh_map:
+  name: Refresh map
+  description: Re-read the map from every Roborock now, for example right after editing no-go zones or invisible walls.
+
+set_room_order:
+  name: Set room order
+  description: Choose the order rooms are cleaned in. An empty list lets the robot decide.
+  fields:
+    entity_id:
+      name: Vacuum
+      required: true
+      selector:
+        entity:
+          domain: vacuum
+    rooms:
+      name: Rooms
+      description: Room (segment) ids in cleaning order, e.g. [23, 20].
+      required: true
+      selector:
+        object:
+
+set_room_settings:
+  name: Set per-room settings
+  description: Replace every room's own suction, water, mop route and repeat count. An empty list clears them. Takes effect when the cleaning mode is Custom.
+  fields:
+    entity_id:
+      name: Vacuum
+      required: true
+      selector:
+        entity:
+          domain: vacuum
+    rooms:
+      name: Rooms
+      description: "List of {segment, fan_speed, water, route, repeat}; names as in the vacuum's own options."
+      required: true
+      selector:
+        object:
+
+split_room:
+  name: Split room
+  description: Split one room in two along a line (robot millimetres). Changes the map permanently; back up the map first.
+  fields:
+    entity_id:
+      name: Vacuum
+      required: true
+      selector:
+        entity:
+          domain: vacuum
+    segment:
+      name: Room id
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 99
+          mode: box
+    x0:
+      name: Line start X
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 60000
+          mode: box
+    y0:
+      name: Line start Y
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 60000
+          mode: box
+    x1:
+      name: Line end X
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 60000
+          mode: box
+    y1:
+      name: Line end Y
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 60000
+          mode: box
+
+merge_rooms:
+  name: Merge rooms
+  description: Merge two neighbouring rooms into one. Changes the map permanently; back up the map first.
+  fields:
+    entity_id:
+      name: Vacuum
+      required: true
+      selector:
+        entity:
+          domain: vacuum
+    segments:
+      name: Rooms
+      description: The two room ids, e.g. [22, 23].
+      required: true
+      selector:
+        object:
