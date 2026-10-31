@@ -125,6 +125,55 @@ integration keeps its own. They are stored in Home Assistant (one file per vacuu
 - They do not touch the robot's own schedule list, and the robot does not run them itself: if
   Home Assistant is off, nothing starts.
 
+### Cleaning settings
+
+A schedule can also say how the robot should clean: a mode, a vacuum power and a mop
+intensity. The default, **Keep current settings**, changes nothing on the robot and behaves
+exactly as schedules always did, so existing schedules are unaffected.
+
+- Modes are Vacuum, Vacuum & mop, Mop and Custom (the robot's own custom settings; no power
+  or intensity can be added). Vacuum power applies to Vacuum and Vacuum & mop; mop intensity
+  to Mop and Vacuum & mop. Leaving either empty ("Mode default") keeps whatever the mode sets.
+- The choices come from what the robot offers right now, read from its Home Assistant
+  entities (the cleaning mode select, the mop intensity select and the vacuum's fan speed
+  list). Models differ, so nothing is hard-coded; `off` and `custom` are never offered as a
+  power or intensity. The card shows an error if the robot cannot be read.
+- Choosing a mode on the robot also resets its vacuum power, mop intensity **and mop route**
+  to that mode's defaults (read from the python-roborock source, not tried on a robot). So a
+  run sets the mode first, then the vacuum power, then the mop intensity, then starts. All of
+  these are ordinary Home Assistant service calls, and the settings stay on the robot
+  afterwards: nothing restores the previous ones, and the app and Home Assistant show them.
+- A schedule with settings only runs while the vacuum is docked or idle. If it is paused,
+  returning or in error, the run is skipped and nothing is changed. If the robot is already
+  cleaning, the run is skipped for every schedule. An unavailable or unknown vacuum is an
+  error for every schedule, and nothing is sent. A schedule without settings keeps the old
+  rule: it is skipped only while cleaning.
+- Before the first command, the run checks that every control and service it needs exists
+  and that the robot offers each requested value. If not, it fails with a message naming the
+  problem and changes nothing.
+- If a command fails part-way (a failed command may or may not have reached the robot), or
+  the schedule is edited or the robot becomes busy part-way, the run stops and never starts
+  the vacuum. The last result lists the settings already applied; they cannot be rolled back.
+  If Home Assistant itself stops in the middle of a run, nothing is recorded.
+- Saving only checks the shape of the settings. Whether the robot offers a value is checked
+  when the schedule runs, so a value the robot stops offering fails the run rather than the
+  save.
+
+Everything above was exercised against Home Assistant's real service layer with stand-in
+entities; how a physical robot reacts (for example whether a power change takes effect while
+docked) has not been tested.
+
+For card authors, the schedule WebSocket commands are `roborock_live_map/schedules/` plus
+`list`, `capabilities` (anyone signed in), and `save`, `set_enabled`, `delete` (administrators
+only), all with `entity_id`. A schedule is `{id, name, time, days, rooms, repeat, enabled,
+settings}` plus read-only `last_run`, `last_result` and `next_run`. `settings` is `{}` (keep
+current settings) or `{"mode": "vacuum" | "vac_and_mop" | "mop" | "custom", "fan_speed"?: str,
+"mop_intensity"?: str}`; it is always present in results. A save that leaves it out (clients
+from before this feature do) keeps an existing schedule's stored settings and gives a new
+schedule `{}`; send `{}` to clear them.
+`capabilities` answers `{"modes": [...], "fan_speeds": [...], "mop_intensities": [...]}` or
+an `unavailable` error whose message says which control could not be read.
+
 The card ships inside this integration (`custom_components/roborock_live_map/frontend/`) and
 Home Assistant loads it for you, so HACS updates it together with the integration and no
 dashboard resource needs adding. After an update, reload the browser page. Add it to a

@@ -27,6 +27,38 @@ const WS_LIST = "roborock_live_map/schedules/list";
 const WS_SAVE = "roborock_live_map/schedules/save";
 const WS_DELETE = "roborock_live_map/schedules/delete";
 const WS_SET_ENABLED = "roborock_live_map/schedules/set_enabled";
+const WS_CAPABILITIES = "roborock_live_map/schedules/capabilities";
+
+// Cleaning settings (schedule.settings). Absent/null = "Keep current settings": the robot's
+// own settings are left untouched. Otherwise {mode, fan_speed?, mop_intensity?}; the intensity
+// fields only apply to explicit (non-custom) modes. Supported values come from the capabilities
+// WebSocket command, never from a hard-coded list of entities or options.
+const MODES = ["vacuum", "mop", "vac_and_mop", "custom"];
+const MODE_LABELS = { vacuum: "Vacuum", mop: "Mop", vac_and_mop: "Vacuum & mop", custom: "Custom" };
+const OPTION_LABELS = { max_plus: "Max+" };
+const EXCLUDED_INTENSITIES = ["off", "custom"];
+const fanApplies = (mode) => mode === "vacuum" || mode === "vac_and_mop";
+const mopApplies = (mode) => mode === "mop" || mode === "vac_and_mop";
+const optionLabel = (v) => {
+  if (OPTION_LABELS[v]) return OPTION_LABELS[v];
+  const t = String(v).trim().replace(/_/g, " ");
+  return t.replace(/\S+/g, (w) => w.charAt(0).toUpperCase() + w.slice(1));
+};
+
+function normaliseSettings(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const mode = typeof raw.mode === "string" ? raw.mode : "";
+  if (!MODES.includes(mode)) return null;
+  const out = { mode };
+  if (fanApplies(mode) && typeof raw.fan_speed === "string" && raw.fan_speed) out.fan_speed = raw.fan_speed;
+  if (mopApplies(mode) && typeof raw.mop_intensity === "string" && raw.mop_intensity) out.mop_intensity = raw.mop_intensity;
+  return out;
+}
+
+function capabilitiesError(err) {
+  if (err?.code === "unknown_command") return "This Home Assistant integration doesn’t support cleaning settings yet. Update the Roborock Live Map integration.";
+  return err?.message ? `The robot’s settings can’t be read right now: ${err.message}` : "The robot’s settings can’t be read right now.";
+}
 
 const POLL_MS = 60000;
 const REPEATS = [1, 2, 3];
@@ -61,6 +93,9 @@ function normalise(raw) {
     rooms,
     repeat: Number.isFinite(repeat) && repeat >= 1 ? Math.round(repeat) : 1,
     enabled: raw?.enabled !== false,
+    settings: normaliseSettings(raw?.settings),
+    last_result: typeof raw?.last_result === "string" ? raw.last_result : "",
+    last_run: typeof raw?.last_run === "string" ? raw.last_run : "",
   };
 }
 
@@ -82,10 +117,12 @@ class RoborockScheduleCard extends HTMLElement {
       this._busy = new Set();
       this._loadError = null;
       this._reqSeq++;
+      this._capsSeq++;
     }
     this._config = { ...config };
     this._draftKey = key;
     this._schedules = null;
+    this._caps = { status: "idle" };
     this._loadedFor = null;
     if (!this._draft) this._restoreDraft();
     if (this._built) this._renderAll();
@@ -112,6 +149,8 @@ class RoborockScheduleCard extends HTMLElement {
     this._rowError = {};      // id -> message
     this._reqSeq = 0;
     this._roomsSig = null;
+    this._caps = { status: "idle" };  // {status: idle|loading|ok|error, modes, fan_speeds, mop_intensities, error}
+    this._capsSeq = 0;
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -139,6 +178,7 @@ class RoborockScheduleCard extends HTMLElement {
     if (!this._built) this._build();
     if (this._loadedFor !== this._config?.entity && this._config) this._load();
     if (wasAdmin !== this._isAdmin) this._renderAll();
+    if (this._draft && this._caps.status === "idle") this._loadCaps();
     this._syncRooms();
   }
 
@@ -201,8 +241,55 @@ class RoborockScheduleCard extends HTMLElement {
     this._renderList();
   }
 
+  async _loadCaps(force = false) {
+    if (!this._hass || !this._config) return;
+    const entity = this._config.entity;
+    if (!force && (this._caps.status === "ok" || this._caps.status === "loading")) return;
+    const seq = ++this._capsSeq;
+    this._caps = { status: "loading" };
+    this._renderSettings();
+    try {
+      const res = await this._hass.callWS({ type: WS_CAPABILITIES, entity_id: entity });
+      if (seq !== this._capsSeq) return;
+      const list = (v) => (Array.isArray(v) ? v.filter((x) => typeof x === "string") : []);
+      this._caps = { status: "ok", modes: list(res?.modes), fan_speeds: list(res?.fan_speeds), mop_intensities: list(res?.mop_intensities) };
+    } catch (err) {
+      if (seq !== this._capsSeq) return;
+      this._caps = { status: "error", error: capabilitiesError(err) };
+    }
+    this._renderSettings();
+  }
+
+  _modeOptions() {
+    return this._caps.status === "ok" ? MODES.filter((m) => this._caps.modes.includes(m)) : [];
+  }
+
+  _intensityOptions(kind) {
+    if (this._caps.status !== "ok") return [];
+    const src = kind === "fan" ? this._caps.fan_speeds : this._caps.mop_intensities;
+    return [...new Set(src)].filter((v) => !EXCLUDED_INTENSITIES.includes(v.toLowerCase()));
+  }
+
+  _settingsError(settings, original) {
+    if (!settings) return "";
+    // Unchanged saved settings can always be re-saved, even if the robot's options can't be read now.
+    if (original && JSON.stringify(normaliseSettings(original)) === JSON.stringify(settings)) return "";
+    if (this._caps.status === "loading") return "Still checking what the robot supports. Try again in a moment.";
+    if (this._caps.status !== "ok") return "Can’t check what the robot supports, so these settings can’t be saved. Retry, or choose Keep current settings.";
+    const label = MODE_LABELS[settings.mode];
+    if (!this._modeOptions().includes(settings.mode)) return `${label} isn’t available on this robot right now. Choose another mode.`;
+    if (settings.fan_speed && !this._intensityOptions("fan").includes(settings.fan_speed)) return `Vacuum power “${optionLabel(settings.fan_speed)}” isn’t available. Choose another or Mode default.`;
+    if (settings.mop_intensity && !this._intensityOptions("mop").includes(settings.mop_intensity)) return `Mop intensity “${optionLabel(settings.mop_intensity)}” isn’t available. Choose another or Mode default.`;
+    return "";
+  }
+
+  _settingsText(settings) {
+    if (!settings) return "";
+    return [MODE_LABELS[settings.mode], settings.fan_speed && optionLabel(settings.fan_speed), settings.mop_intensity && optionLabel(settings.mop_intensity)].filter(Boolean).join(" · ");
+  }
+
   async _callSave(schedule) {
-    const payload = { name: schedule.name, time: schedule.time, days: schedule.days, rooms: schedule.rooms, repeat: schedule.rooms.length ? schedule.repeat : 1, enabled: schedule.enabled };
+    const payload = { name: schedule.name, time: schedule.time, days: schedule.days, rooms: schedule.rooms, repeat: schedule.rooms.length ? schedule.repeat : 1, enabled: schedule.enabled, settings: normaliseSettings(schedule.settings) || {} };
     if (schedule.id) payload.id = schedule.id;
     const saved = await this._hass.callWS({ type: WS_SAVE, entity_id: this._config.entity, schedule: payload });
     return normalise(saved);
@@ -262,7 +349,7 @@ class RoborockScheduleCard extends HTMLElement {
 
   _persistDraft() {
     try {
-      if (this._draft) sessionStorage.setItem(this._draftKey, JSON.stringify({ schedule: this._draft.schedule, isNew: this._draft.isNew, scope: this._draft.scope }));
+      if (this._draft) sessionStorage.setItem(this._draftKey, JSON.stringify({ schedule: this._draft.schedule, isNew: this._draft.isNew, scope: this._draft.scope, original: this._draft.original }));
       else sessionStorage.removeItem(this._draftKey);
     } catch (_) {}
   }
@@ -271,22 +358,23 @@ class RoborockScheduleCard extends HTMLElement {
     try {
       const raw = sessionStorage.getItem(this._draftKey);
       if (!raw) return;
-      const { schedule, isNew, scope } = JSON.parse(raw);
+      const { schedule, isNew, scope, original } = JSON.parse(raw);
       const norm = normalise(schedule);
-      this._draft = { schedule: norm, isNew: !!isNew, scope: scope === "rooms" || scope === "home" ? scope : norm.rooms.length ? "rooms" : "home", error: null, saving: false };
+      this._draft = { schedule: norm, isNew: !!isNew, scope: scope === "rooms" || scope === "home" ? scope : norm.rooms.length ? "rooms" : "home", original: normaliseSettings(original), error: null, saving: false };
     } catch (_) {}
   }
 
   _openEditor(id) {
     const existing = id ? this._schedules?.find((s) => s.id === id) : null;
     const schedule = existing
-      ? { ...existing, days: [...existing.days], rooms: [...existing.rooms] }
-      : { id: undefined, name: "", time: "08:00", days: [...WEEKDAYS_ONLY], rooms: [], repeat: 1, enabled: true };
-    this._draft = { schedule, isNew: !existing, scope: schedule.rooms.length ? "rooms" : "home", error: null, saving: false };
+      ? { ...existing, days: [...existing.days], rooms: [...existing.rooms], settings: existing.settings ? { ...existing.settings } : null }
+      : { id: undefined, name: "", time: "08:00", days: [...WEEKDAYS_ONLY], rooms: [], repeat: 1, enabled: true, settings: null };
+    this._draft = { schedule, isNew: !existing, scope: schedule.rooms.length ? "rooms" : "home", original: existing?.settings ? { ...existing.settings } : null, error: null, saving: false };
     this._confirmId = null;
     this._persistDraft();
     this._renderAll();
     this.shadowRoot.querySelector("#f-name")?.focus();
+    this._loadCaps(true);
   }
 
   _closeEditor() {
@@ -301,6 +389,8 @@ class RoborockScheduleCard extends HTMLElement {
     if (!TIME_RE.test(s.time)) errors.time = "Pick a time.";
     if (!s.days.length) errors.days = "Pick at least one day.";
     if (scope === "rooms" && !s.rooms.length) errors.rooms = "Choose at least one room, or switch to Whole home.";
+    const settingsErr = this._settingsError(s.settings, this._draft?.original);
+    if (settingsErr) errors.settings = settingsErr;
     return errors;
   }
 
@@ -312,7 +402,7 @@ class RoborockScheduleCard extends HTMLElement {
     d.error = null;
     if (Object.keys(d.errors).length) {
       this._renderEditor();
-      const first = { name: "#f-name", time: "#f-time", days: "#days-group button", rooms: "#rooms [data-act=scope][data-scope=rooms]" }[Object.keys(d.errors)[0]];
+      const first = { name: "#f-name", time: "#f-time", days: "#days-group button", rooms: "#rooms [data-act=scope][data-scope=rooms]", settings: "#f-mode" }[Object.keys(d.errors)[0]];
       this.shadowRoot.querySelector(first)?.focus();
       return;
     }
@@ -465,12 +555,18 @@ class RoborockScheduleCard extends HTMLElement {
     const confirming = this._confirmId === s.id;
     const err = this._rowError[s.id];
     const repeat = s.rooms.length && s.repeat > 1 ? ` · ${s.repeat}×` : "";
+    const settingsText = this._settingsText(s.settings);
+    const runProblem = /^error\b/i.test(s.last_result) || /^skipped: vacuum is /i.test(s.last_result)
+      ? `${/^error/i.test(s.last_result) ? "Last run failed" : "Last run skipped"}: ${s.last_result.replace(/^(error|skipped):\s*/i, "")}`
+      : "";
     return `<li class="row${s.enabled ? "" : " off"}" data-id="${id}">
   <div class="row-main">
     <div class="time">${escapeHtml(this._time(s.time))}</div>
     <div class="info">
       <div class="name">${escapeHtml(s.name || "Untitled")}</div>
       <div class="meta">${escapeHtml(this._daysText(s.days))} · ${escapeHtml(this._roomsText(s.rooms))}${repeat}</div>
+      ${settingsText ? `<div class="meta">${escapeHtml(settingsText)}</div>` : ""}
+      ${runProblem ? `<div class="run-problem" role="note" data-run-problem>${escapeHtml(runProblem)}</div>` : ""}
     </div>
     <button class="switch" type="button" role="switch" aria-checked="${s.enabled}" aria-label="${escapeHtml(s.name || "Schedule")} enabled" data-act="toggle" data-id="${id}" ${!admin || busy ? "disabled" : ""}><span class="knob"></span></button>
   </div>
@@ -531,6 +627,7 @@ class RoborockScheduleCard extends HTMLElement {
     ${REPEATS.map((n) => `<button type="button" role="radio" aria-checked="${s.repeat === n}" data-act="repeat" data-repeat="${n}" ${dis}>${n}×</button>`).join("")}
   </div>
 </fieldset>
+<fieldset class="field" id="settings-group" ${errs.settings ? 'aria-describedby="e-settings"' : ""}></fieldset>
 <div class="field inline">
   <label for="f-enabled">Enabled</label>
   <button id="f-enabled" class="switch" type="button" role="switch" aria-checked="${s.enabled}" data-act="enabled" ${dis}><span class="knob"></span></button>
@@ -542,6 +639,71 @@ ${!this._isAdmin ? `<div class="inline-error" role="alert">Only a Home Assistant
   <button class="pill primary" type="submit" ${dis}>${d.saving ? "Saving…" : "Save"}</button>
 </div>`;
     this._renderRoomPicker();
+    this._renderSettings();
+  }
+
+  _renderSettings() {
+    const box = this.shadowRoot.querySelector("#settings-group");
+    const d = this._draft;
+    if (!box || !d) return;
+    const active = this.shadowRoot.activeElement;
+    const focusId = active && box.contains(active) ? active.id || active.dataset?.act : null;
+    const s = d.schedule;
+    const st = s.settings;
+    const caps = this._caps;
+    const dis = d.saving || !this._isAdmin ? "disabled" : "";
+    const modes = this._modeOptions();
+    const sel = (id, label, value, options, applicable, unavailableText) => {
+      const missing = value && !options.includes(value) ? `<option value="${escapeHtml(value)}" selected>${escapeHtml(optionLabel(value))} (${unavailableText})</option>` : "";
+      return `<div class="sub-field"><label for="${id}">${label}</label>
+  <select id="${id}" ${dis}>
+    <option value="" ${value ? "" : "selected"}>Mode default</option>
+    ${options.map((o) => `<option value="${escapeHtml(o)}" ${o === value ? "selected" : ""}>${escapeHtml(optionLabel(o))}</option>`).join("")}${missing}
+  </select></div>`;
+    };
+    const modeMissing = st && !modes.includes(st.mode) ? `<option value="${st.mode}" selected>${MODE_LABELS[st.mode]} (${caps.status === "ok" ? "unavailable" : "not checked"})</option>` : "";
+    let help;
+    if (!st) help = "Nothing on the robot is changed.";
+    else if (st.mode === "custom") help = "Uses the robot’s saved room settings, which may not exist for every room. Power and mop intensity aren’t set. Applies to the whole robot and stays after cleaning.";
+    else help = "Applies to the whole robot and stays after cleaning. The mode resets its mop route; power and water use your choices above. Skipped if already cleaning.";
+    box.innerHTML = `
+<legend>Cleaning settings</legend>
+<div class="sub-field">
+  <label for="f-mode">Mode</label>
+  <select id="f-mode" aria-describedby="mode-help${d.errors?.settings ? " e-settings" : ""}" ${d.errors?.settings ? 'aria-invalid="true"' : ""} ${dis}>
+    <option value="" ${st ? "" : "selected"}>Keep current settings</option>
+    ${modes.map((m) => `<option value="${m}" ${st?.mode === m ? "selected" : ""}>${MODE_LABELS[m]}</option>`).join("")}${modeMissing}
+  </select>
+</div>
+${caps.status === "loading" ? `<div class="hint" role="status">Checking what this robot supports…</div>` : ""}
+${caps.status === "error" ? `<div class="inline-error" role="alert">${escapeHtml(caps.error)} Until this works you can keep the saved settings or choose Keep current settings. <button type="button" class="chip" data-act="caps-retry" ${dis}>Retry</button></div>` : ""}
+${st && fanApplies(st.mode) ? sel("f-fan", "Vacuum power", st.fan_speed, this._intensityOptions("fan"), true, "unavailable") : ""}
+${st && mopApplies(st.mode) ? sel("f-mop", "Mop intensity", st.mop_intensity, this._intensityOptions("mop"), true, "unavailable") : ""}
+<div class="hint" id="mode-help">${escapeHtml(help)}</div>
+${d.errors?.settings ? `<div class="field-error" id="e-settings" role="alert">${escapeHtml(d.errors.settings)}</div>` : ""}`;
+    if (d.errors?.settings) box.setAttribute("aria-describedby", "e-settings");
+    else box.removeAttribute("aria-describedby");
+    if (focusId) (box.querySelector(focusId.startsWith("f-") ? `#${focusId}` : `[data-act="${focusId}"]`) || box.querySelector("#f-mode"))?.focus();
+  }
+
+  _setSetting(id, value) {
+    const d = this._draft;
+    const s = d.schedule;
+    if (id === "f-mode") {
+      if (!value) s.settings = null;
+      else {
+        const prev = s.settings || {};
+        s.settings = normaliseSettings({ mode: value, fan_speed: prev.fan_speed, mop_intensity: prev.mop_intensity });
+      }
+    } else if (s.settings) {
+      const key = id === "f-fan" ? "fan_speed" : "mop_intensity";
+      if (value) s.settings[key] = value;
+      else delete s.settings[key];
+    }
+    if (d.errors) delete d.errors.settings;
+    this._renderSettings();
+    this._persistDraft();
+    this._announce(s.settings ? "Cleaning settings updated." : "Keeping the robot’s current settings.");
   }
 
   _renderRoomPicker() {
@@ -607,6 +769,7 @@ ${roomErr ? `<div class="field-error" id="e-rooms" role="alert">${escapeHtml(d.e
     }
     if (!d || d.saving) return;
     const s = d.schedule;
+    if (act === "caps-retry") return this._loadCaps(true);
     if (act === "day") {
       const n = Number(btn.dataset.day);
       s.days = s.days.includes(n) ? s.days.filter((x) => x !== n) : [...s.days, n].sort((a, b) => a - b);
@@ -661,6 +824,9 @@ ${roomErr ? `<div class="field-error" id="e-rooms" role="alert">${escapeHtml(d.e
         t.removeAttribute("aria-invalid");
         this.shadowRoot.querySelector("#e-time")?.remove();
       }
+    } else if (t.id === "f-mode" || t.id === "f-fan" || t.id === "f-mop") {
+      if (e.type === "change") this._setSetting(t.id, t.value);
+      return;
     } else if (t.dataset?.act === "room" && e.type === "change") {
       const id = Number(t.dataset.room);
       s.rooms = t.checked ? [...s.rooms, id] : s.rooms.filter((x) => x !== id);
@@ -778,6 +944,17 @@ input:disabled { opacity: .6; }
 .room input { width: 20px; height: 20px; margin: 0; accent-color: var(--lu-accent); flex: none; }
 .room span { overflow-wrap: anywhere; }
 .hint { margin-top: 8px; font-size: 13px; color: var(--lu-ink-3); }
+.run-problem { margin-top: 4px; font-size: 13px; color: var(--lu-danger); overflow-wrap: anywhere; }
+.sub-field { display: flex; flex-direction: column; gap: 6px; margin-top: 8px; }
+.sub-field > label { font-size: 13px; color: var(--lu-ink-2); }
+select {
+  box-sizing: border-box; width: 100%; min-height: var(--lu-target); padding: 0 14px;
+  border-radius: var(--lu-radius-control); border: 1px solid var(--lu-edge); background: var(--lu-tile);
+  color: var(--lu-ink); font: inherit; font-size: 16px; color-scheme: light dark;
+}
+select:focus-visible { outline: 2px solid var(--lu-accent); outline-offset: 2px; }
+select[aria-invalid="true"] { border-color: var(--lu-danger); }
+select:disabled { opacity: .6; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .editor-actions { display: flex; justify-content: flex-end; gap: 8px; position: sticky; bottom: 0; padding-top: 4px; }
 

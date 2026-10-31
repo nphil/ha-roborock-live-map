@@ -265,7 +265,8 @@ def _schedule_validator(raw: Any) -> dict[str, Any]:
 def async_register_schedule_commands(hass: HomeAssistant) -> None:
     """Register the roborock_live_map/schedules/* WebSocket commands (once).
 
-    list is readable by any authenticated user; save and delete need an admin.
+    list and capabilities are readable by any authenticated user; save, delete
+    and set_enabled need an admin.
     """
 
     def _runtime(connection, msg) -> VacuumRuntime | None:
@@ -289,6 +290,30 @@ def async_register_schedule_commands(hass: HomeAssistant) -> None:
         """Return every schedule for the vacuum."""
         if (runtime := _runtime(connection, msg)) is not None:
             connection.send_result(msg["id"], runtime.schedules.async_list())
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): "roborock_live_map/schedules/capabilities",
+            vol.Required("entity_id"): cv.entity_id,
+        }
+    )
+    @callback
+    def handle_capabilities(
+        hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+    ) -> None:
+        """Answer {"modes", "fan_speeds", "mop_intensities"} read from the live robot.
+
+        Fails with ``unavailable`` (and says which control) when the robot's
+        entities cannot be read; nothing is guessed.
+        """
+        if (runtime := _runtime(connection, msg)) is None:
+            return
+        try:
+            capabilities = runtime.schedules.async_capabilities()
+        except ScheduleError as err:
+            connection.send_error(msg["id"], err.code, str(err))
+            return
+        connection.send_result(msg["id"], capabilities)
 
     @websocket_api.websocket_command(
         {
@@ -357,5 +382,11 @@ def async_register_schedule_commands(hass: HomeAssistant) -> None:
             return
         connection.send_result(msg["id"], saved)
 
-    for handler in (handle_list, handle_save, handle_delete, handle_set_enabled):
+    for handler in (
+        handle_list,
+        handle_capabilities,
+        handle_save,
+        handle_delete,
+        handle_set_enabled,
+    ):
         websocket_api.async_register_command(hass, handler)
