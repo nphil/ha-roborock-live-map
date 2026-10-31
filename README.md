@@ -101,7 +101,44 @@ sensor.
   arrives for 0.6 seconds the robot is told to stop, and the session ends after 60 seconds
   without input.
 
-No card is included in this repository.
+The only card in this repository is the schedule card, described next. The 3D map, remote,
+dock and rooms cards are not included.
+
+## Cleaning schedules and the schedule card
+
+The robot's own schedules cannot be managed with a self-hosted Roborock server, so this
+integration keeps its own. They are stored in Home Assistant (one file per vacuum under
+`.storage`) and Home Assistant starts the clean at the set time. How they behave:
+
+- A schedule has a name, a time, the weekdays, the rooms (none means the whole home), a repeat
+  count (rooms only, 1 to 3) and an on/off switch.
+- Times are local time in Home Assistant's configured time zone and follow daylight saving.
+- A schedule only runs while Home Assistant is running. A time that passes while Home
+  Assistant is down or starting is skipped, never replayed, so a restart cannot start a clean
+  nobody expects. Creating, enabling or editing a schedule never runs for a time that has
+  already passed.
+- Each run makes one attempt, with no retries. If the robot is already cleaning the run is
+  skipped; if the vacuum is unavailable the run fails. The outcome is kept as the schedule's
+  last result.
+- Anyone signed in can see the schedules; only a Home Assistant administrator can create,
+  edit, switch or delete them.
+- They do not touch the robot's own schedule list, and the robot does not run them itself: if
+  Home Assistant is off, nothing starts.
+
+The card ships inside this integration (`custom_components/roborock_live_map/frontend/`) and
+Home Assistant loads it for you, so HACS updates it together with the integration and no
+dashboard resource needs adding. After an update, reload the browser page. Add it to a
+dashboard with:
+
+```yaml
+type: custom:roborock-schedule-card
+entity: vacuum.your_robot
+order_entity: sensor.your_robot_room_order
+```
+
+`entity` is the vacuum and `order_entity` is the room order sensor, which supplies the room
+names. If you previously added the card by hand as a `/local/...roborock-schedule-card.js`
+dashboard resource, delete that resource and file once this version is installed.
 
 ## Good to know
 

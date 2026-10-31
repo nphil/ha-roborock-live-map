@@ -28,6 +28,7 @@ from homeassistant.helpers import config_validation as cv
 from . import raw_commands as raw
 from .const import DOMAIN
 from .entity import run_command
+from .schedules import ScheduleError, validate_schedule_input
 from .runtime import VacuumRuntime, all_runtimes, runtime_for_entity
 
 
@@ -250,3 +251,111 @@ def async_register_remote_command(hass: HomeAssistant) -> None:
         connection.send_result(msg["id"], result)
 
     websocket_api.async_register_command(hass, handle_remote)
+
+
+def _schedule_validator(raw: Any) -> dict[str, Any]:
+    """Schema validator that keeps the specific message of a bad schedule."""
+    try:
+        return validate_schedule_input(raw)
+    except ValueError as err:
+        raise vol.Invalid(str(err)) from err
+
+
+@callback
+def async_register_schedule_commands(hass: HomeAssistant) -> None:
+    """Register the roborock_live_map/schedules/* WebSocket commands (once).
+
+    list is readable by any authenticated user; save and delete need an admin.
+    """
+
+    def _runtime(connection, msg) -> VacuumRuntime | None:
+        runtime = runtime_for_entity(hass, msg["entity_id"])
+        if runtime is None:
+            connection.send_error(
+                msg["id"], "not_found", f"No Roborock vacuum behind {msg['entity_id']}"
+            )
+        return runtime
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): "roborock_live_map/schedules/list",
+            vol.Required("entity_id"): cv.entity_id,
+        }
+    )
+    @callback
+    def handle_list(
+        hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+    ) -> None:
+        """Return every schedule for the vacuum."""
+        if (runtime := _runtime(connection, msg)) is not None:
+            connection.send_result(msg["id"], runtime.schedules.async_list())
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): "roborock_live_map/schedules/save",
+            vol.Required("entity_id"): cv.entity_id,
+            vol.Required("schedule"): _schedule_validator,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def handle_save(
+        hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+    ) -> None:
+        """Create or update a schedule; answers with the saved schedule."""
+        if (runtime := _runtime(connection, msg)) is None:
+            return
+        try:
+            saved = await runtime.schedules.async_save(msg["schedule"])
+        except ScheduleError as err:
+            connection.send_error(msg["id"], err.code, str(err))
+            return
+        connection.send_result(msg["id"], saved)
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): "roborock_live_map/schedules/delete",
+            vol.Required("entity_id"): cv.entity_id,
+            vol.Required("schedule_id"): vol.All(str, vol.Length(min=1, max=64)),
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def handle_delete(
+        hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+    ) -> None:
+        """Delete a schedule by schedule_id (``id`` is the WS message id); answers {"success": true}."""
+        if (runtime := _runtime(connection, msg)) is None:
+            return
+        try:
+            await runtime.schedules.async_delete(msg["schedule_id"])
+        except ScheduleError as err:
+            connection.send_error(msg["id"], err.code, str(err))
+            return
+        connection.send_result(msg["id"], {"success": True})
+
+    @websocket_api.websocket_command(
+        {
+            vol.Required("type"): "roborock_live_map/schedules/set_enabled",
+            vol.Required("entity_id"): cv.entity_id,
+            vol.Required("schedule_id"): vol.All(str, vol.Length(min=1, max=64)),
+            vol.Required("enabled"): bool,
+        }
+    )
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def handle_set_enabled(
+        hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]
+    ) -> None:
+        """Atomically switch one schedule on or off; answers the updated schedule."""
+        if (runtime := _runtime(connection, msg)) is None:
+            return
+        try:
+            saved = await runtime.schedules.async_set_enabled(msg["schedule_id"], msg["enabled"])
+        except ScheduleError as err:
+            connection.send_error(msg["id"], err.code, str(err))
+            return
+        connection.send_result(msg["id"], saved)
+
+    for handler in (handle_list, handle_save, handle_delete, handle_set_enabled):
+        websocket_api.async_register_command(hass, handler)

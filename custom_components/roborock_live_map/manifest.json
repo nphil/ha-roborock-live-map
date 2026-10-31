@@ -5,11 +5,12 @@
   "config_flow": true,
   "dependencies": [
     "roborock",
-    "http"
+    "http",
+    "frontend"
   ],
   "documentation": "https://github.com/nphil/ha-roborock-live-map",
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/nphil/ha-roborock-live-map/issues",
   "requirements": [],
-  "version": "1.0.1"
+  "version": "1.1.0"
 }

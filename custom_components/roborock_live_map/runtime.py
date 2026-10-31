@@ -18,6 +18,7 @@ from .const import DOMAIN
 from .fast_map import FastMapRefresher
 from .history import CleanHistory
 from .remote import RemoteSession
+from .schedules import ScheduleManager
 from .settings import RawSettings
 
 
@@ -32,6 +33,7 @@ class VacuumRuntime:
     settings: RawSettings
     history: CleanHistory
     remote: RemoteSession
+    schedules: ScheduleManager
 
 
 def all_runtimes(hass: HomeAssistant) -> list[VacuumRuntime]:
