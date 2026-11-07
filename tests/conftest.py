@@ -6,7 +6,7 @@ running its __init__, and the few modules that would pull those in (entity,
 raw_commands, runtime) are replaced by minimal stand-ins before services.py
 is imported.
 
-Run (needs pytest-homeassistant-custom-component):
+Run (needs pytest-homeassistant, the harness shipped with Home Assistant core):
 
     pytest tests
 """
@@ -61,6 +61,3 @@ def _install_stubs() -> None:
 _install_stubs()
 
 
-@pytest.fixture(autouse=True)
-def auto_enable_custom_integrations(enable_custom_integrations):
-    """Allow custom integrations in every test."""

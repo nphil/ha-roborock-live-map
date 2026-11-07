@@ -16,7 +16,7 @@ from datetime import datetime
 import types
 
 import pytest
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     MockConfigEntry,
     MockModule,
     MockPlatform,
@@ -28,7 +28,7 @@ from pytest_homeassistant_custom_component.common import (
 
 from homeassistant.components.select import SelectEntity
 from homeassistant.components.vacuum import StateVacuumEntity, VacuumActivity, VacuumEntityFeature
-from homeassistant.config_entries import ConfigFlow
+from homeassistant.config_entries import ConfigEntryState, ConfigFlow
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers import device_registry as dr, entity_registry as er
@@ -175,8 +175,8 @@ async def build_robot(
         )
 
     async def entry_setup(hass, entry):
+        # Core integrations return None (2026.11 reports a returned boolean as an error).
         await hass.config_entries.async_forward_entry_setups(entry, ["select", "vacuum"])
-        return True
 
     async def select_setup(hass, entry, add):
         add([e for e in (robot.mode, robot.mop) if e is not None])
@@ -190,7 +190,8 @@ async def build_robot(
     mock_platform(hass, "roborock.config_flow", None)
     entry = MockConfigEntry(domain="roborock")
     entry.add_to_hass(hass)
-    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.config_entries.async_setup(entry.entry_id)
+    assert entry.state is ConfigEntryState.LOADED
     await hass.async_block_till_done()
     robot.device = dr.async_get(hass).async_get_device_by_identifier(
         ("roborock", SLUG), entry.entry_id

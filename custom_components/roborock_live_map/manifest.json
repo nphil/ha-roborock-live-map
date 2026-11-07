@@ -1,6 +1,7 @@
 {
   "domain": "roborock_live_map",
   "name": "Roborock Live Map",
+  "categories": ["appliances_cleaning.cleaning"],
   "codeowners": ["@nphil"],
   "config_flow": true,
   "dependencies": [
@@ -12,5 +13,5 @@
   "iot_class": "local_polling",
   "issue_tracker": "https://github.com/nphil/ha-roborock-live-map/issues",
   "requirements": [],
-  "version": "1.2.0"
+  "version": "1.2.1"
 }

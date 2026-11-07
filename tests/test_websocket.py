@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from pytest_homeassistant_custom_component.common import MockConfigEntry
+from pytest_homeassistant.common import MockConfigEntry
 
 from homeassistant.helpers import device_registry as dr, entity_registry as er
 
@@ -169,7 +169,7 @@ async def test_after_unload_changes_report_unavailable(hass, hass_ws_client, man
 
 
 async def test_ws_saved_room_schedule_fires_segment_clean(hass, hass_ws_client, manager, freezer):
-    from pytest_homeassistant_custom_component.common import (
+    from pytest_homeassistant.common import (
         async_fire_time_changed,
         async_mock_service,
     )

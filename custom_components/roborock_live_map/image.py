@@ -146,6 +146,11 @@ class CleanHistoryMapImage(RoborockLiveMapEntity, ImageEntity):
         self.async_on_remove(self._history.add_listener(self._handle_history_update))
 
     @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes (Home Assistant 2026.11+)."""
+        super().async_entity_id_changed(old_entity_id)
+
+    @callback
     def _handle_history_update(self) -> None:
         """Bump the image timestamp only when a different map arrives."""
         content = self._history.map_content

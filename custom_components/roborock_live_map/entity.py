@@ -23,11 +23,17 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 _T = TypeVar("_T")
 
 
+def _identifiers(info: Any) -> set[tuple[str, str]]:
+    """The identifiers of a core DeviceInfo, a TypedDict before 2026.11 and a dataclass since."""
+    identifiers = getattr(info, "identifiers", None)
+    return identifiers if identifiers is not None else info["identifiers"]
+
+
 def roborock_device(
     hass: HomeAssistant, coordinator: RoborockDataUpdateCoordinator, roborock_entry_id: str
 ) -> dr.DeviceEntry | None:
     """The core Roborock integration's device for this coordinator's vacuum."""
-    identifier = next(iter(coordinator.device_info["identifiers"]))
+    identifier = next(iter(_identifiers(coordinator.device_info)))
     return dr.async_get(hass).async_get_device_by_identifier(identifier, roborock_entry_id)
 
 
@@ -39,7 +45,7 @@ def roborock_dock_device(
     Mirrors roborock_device() but for the synthesized "<name> Dock" device the
     core coordinator creates alongside the vacuum (coordinator.dock_device_info).
     """
-    identifier = next(iter(coordinator.dock_device_info["identifiers"]))
+    identifier = next(iter(_identifiers(coordinator.dock_device_info)))
     return dr.async_get(hass).async_get_device_by_identifier(identifier, roborock_entry_id)
 
 def current_map_content(coordinator: RoborockDataUpdateCoordinator) -> Any | None:
@@ -139,6 +145,14 @@ class RoborockSettingsEntity(RoborockLiveMapEntity):
         self.async_on_remove(
             self._settings.add_listener(self._handle_settings_update)
         )
+
+    @callback
+    def async_entity_id_changed(self, old_entity_id: str) -> None:
+        """Opt in to in-place entity_id changes (Home Assistant 2026.11+).
+
+        Nothing here is keyed on the entity_id; the listener is per entity object.
+        """
+        super().async_entity_id_changed(old_entity_id)
 
     @callback
     def _handle_settings_update(self) -> None:
